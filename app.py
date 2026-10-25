@@ -69,7 +69,7 @@ with st.sidebar:
         'Number of Customers (I)',
         min_value=5,
         max_value=10000,
-        value=500,  # default set to 500 for fast browser rendering; user can scale up to 10000
+        value=500,  # Recommended default for stable cloud hosting; can go up to 10000
         step=50,
     )
     num_stores = st.number_input(
@@ -136,7 +136,6 @@ TRANSPORT_COST_PER_KM = 15.0
 REVENUE_PER_UNIT = 180.0
 
 
-@st.cache_data
 def solve_dark_store_model(
     n_cust, n_str, max_stores_open=None, custom_max_dist=max_distance_km
 ):
@@ -144,13 +143,11 @@ def solve_dark_store_model(
   if not solver:
     return None
 
-  # Set time limit to prevent infinite hanging (e.g., 60 seconds max)
-  solver.set_time_limit(60000)
+  solver.set_time_limit(30000)  # 30 second timeout protection
 
   X = {}
   for i in range(n_cust):
     for j in range(n_str):
-      # Pre-filter: only create variables for valid distances within max distance
       if d[(i, j)] <= custom_max_dist:
         X[(i, j)] = solver.NumVar(0.0, solver.infinity(), f'X_{i}_{j}')
 
@@ -165,16 +162,14 @@ def solve_dark_store_model(
     objective.SetCoefficient(y[j], F[j])
   objective.SetMinimization()
 
-  # Demand satisfaction constraint
   for i in range(n_cust):
     valid_stores = [j for j in range(n_str) if (i, j) in X]
     if not valid_stores:
-      return {'status': 'Infeasible'}  # Customer cannot be reached by any store
+      return {'status': 'Infeasible'}
     constraint = solver.Constraint(D[i], D[i], f'Demand_{i}')
     for j in valid_stores:
       constraint.SetCoefficient(X[(i, j)], 1.0)
 
-  # Capacity constraint
   for j in range(n_str):
     constraint = solver.Constraint(-solver.infinity(), 0.0, f'Capacity_{j}')
     for i in range(n_cust):
@@ -209,7 +204,7 @@ def solve_dark_store_model(
     return {'status': 'Infeasible'}
 
 
-with st.spinner('Running optimization model... Please wait.'):
+with st.spinner('Running optimization model...'):
   results = solve_dark_store_model(num_customers, num_stores)
 
 if results and results['status'] == 'Optimal':
@@ -279,7 +274,7 @@ if results and results['status'] == 'Optimal':
             fill_opacity=0.05,
         ).add_to(m)
 
-    plot_limit = min(num_customers, 500)
+    plot_limit = min(num_customers, 300)
     for i in range(plot_limit):
       folium.CircleMarker(
           location=cust_coords[i],
@@ -292,7 +287,7 @@ if results and results['status'] == 'Optimal':
 
     link_count = 0
     for (i, j), val in results['allocations'].items():
-      if link_count < 300:
+      if link_count < 200:
         folium.PolyLine(
             locations=[cust_coords[i], store_coords[j]],
             color='gray',
@@ -337,6 +332,7 @@ if results and results['status'] == 'Optimal':
     costs = []
 
     for limit in store_limits:
+      # Only run scenario if limit does not exceed total candidate stores available
       if limit <= num_stores:
         res_limit = solve_dark_store_model(
             num_customers, num_stores, max_stores_open=limit
@@ -358,34 +354,40 @@ if results and results['status'] == 'Optimal':
     ]
     valid_profits = [p for p in profits if p is not None]
 
-    fig, ax1 = plt.subplots(figsize=(10, 5))
-    ax1.plot(
-        valid_limits,
-        valid_profits,
-        marker='o',
-        color='forestgreen',
-        linewidth=2.5,
-        label='Net Profit (₹)',
-    )
-    ax1.set_title(
-        'Total Profit vs. Maximum Allowed Open Dark Stores',
-        fontsize=12,
-        weight='bold',
-    )
-    ax1.set_xlabel('Max Allowed Open Dark Stores', fontsize=10)
-    ax1.set_ylabel('Net Profit (₹)', fontsize=10, color='forestgreen')
-    ax1.grid(True, linestyle='--', alpha=0.6)
+    if valid_limits:
+      fig, ax1 = plt.subplots(figsize=(10, 5))
+      ax1.plot(
+          valid_limits,
+          valid_profits,
+          marker='o',
+          color='forestgreen',
+          linewidth=2.5,
+          label='Net Profit (₹)',
+      )
+      ax1.set_title(
+          'Total Profit vs. Maximum Allowed Open Dark Stores',
+          fontsize=12,
+          weight='bold',
+      )
+      ax1.set_xlabel('Max Allowed Open Dark Stores', fontsize=10)
+      ax1.set_ylabel('Net Profit (₹)', fontsize=10, color='forestgreen')
+      ax1.grid(True, linestyle='--', alpha=0.6)
 
-    st.pyplot(fig)
+      st.pyplot(fig)
 
-    sensitivity_df = pd.DataFrame({
-        'Max Stores Allowed': valid_limits,
-        'Total System Cost (₹)': [
-            f'₹{c:,.0f}' for c in costs if c is not None
-        ],
-        'Total Net Profit (₹)': [f'₹{p:,.0f}' for p in valid_profits],
-    })
-    st.dataframe(sensitivity_df, width='stretch')
+      sensitivity_df = pd.DataFrame({
+          'Max Stores Allowed': valid_limits,
+          'Total System Cost (₹)': [
+              f'₹{c:,.0f}' for c in costs if c is not None
+          ],
+          'Total Net Profit (₹)': [f'₹{p:,.0f}' for p in valid_profits],
+      })
+      st.dataframe(sensitivity_df, width='stretch')
+    else:
+      st.warning(
+          '⚠️ Candidate stores count must be at least equal to scenario limits (e.g. set Candidate Stores >= 25) '
+          'to generate the scenario sensitivity chart.'
+      )
 
 else:
     st.error(
