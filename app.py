@@ -69,7 +69,7 @@ with st.sidebar:
         'Number of Customers (I)',
         min_value=5,
         max_value=10000,
-        value=500,  # Recommended default for stable cloud hosting; can go up to 10000
+        value=500,
         step=50,
     )
     num_stores = st.number_input(
@@ -122,6 +122,7 @@ def generate_chennai_land_data(n_cust, n_str):
     for j in range(n_str):
       lat1, lon1 = cust_coords[i]
       lat2, lon2 = store_coords[j]
+      # Approximate km distance (~111 km per degree)
       dist = np.sqrt((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) * 111.0
       d[(i, j)] = dist
 
@@ -143,7 +144,7 @@ def solve_dark_store_model(
   if not solver:
     return None
 
-  solver.set_time_limit(30000)  # 30 second timeout protection
+  solver.set_time_limit(30000)
 
   X = {}
   for i in range(n_cust):
@@ -229,7 +230,10 @@ if results and results['status'] == 'Optimal':
   )
 
   with tab1:
-    st.subheader('Geospatial Visualisation across Chennai Land Hubs with Detailed Store Metrics')
+    st.subheader(
+        'Geospatial Visualisation across Chennai Land Hubs with Detailed Store'
+        ' Metrics'
+    )
     m = folium.Map(location=(13.0827, 80.2707), zoom_start=12)
 
     for j in range(num_stores):
@@ -322,7 +326,9 @@ if results and results['status'] == 'Optimal':
     st.dataframe(pd.DataFrame(store_summary), width='stretch')
 
   with tab3:
-    st.subheader('📈 Profit Analysis when Up to 2, 5, 10, 20, 25 Dark Stores Open')
+    st.subheader(
+        '📈 Profit Analysis when Up to 2, 5, 10, 20, 25 Dark Stores Open'
+    )
     st.markdown(
         'Evaluating network profitability across different restrictions on maximum open dark stores.'
     )
@@ -332,7 +338,6 @@ if results and results['status'] == 'Optimal':
     costs = []
 
     for limit in store_limits:
-      # Only run scenario if limit does not exceed total candidate stores available
       if limit <= num_stores:
         res_limit = solve_dark_store_model(
             num_customers, num_stores, max_stores_open=limit
