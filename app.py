@@ -122,7 +122,7 @@ def generate_chennai_land_data(n_cust, n_str):
     for j in range(n_str):
       lat1, lon1 = cust_coords[i]
       lat2, lon2 = store_coords[j]
-      # Approximate km distance (~111 km per degree)
+      # Clean distance calculation without stray characters
       dist = np.sqrt((lat1 - lat2) ** 2 + (lon1 - lon2) ** 2) * 111.0
       d[(i, j)] = dist
 
