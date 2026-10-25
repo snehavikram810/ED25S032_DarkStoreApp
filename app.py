@@ -69,7 +69,7 @@ with st.sidebar:
         'Number of Customers (I)',
         min_value=5,
         max_value=10000,
-        value=100,
+        value=500,  # default set to 500 for fast browser rendering; user can scale up to 10000
         step=50,
     )
     num_stores = st.number_input(
@@ -136,62 +136,67 @@ TRANSPORT_COST_PER_KM = 15.0
 REVENUE_PER_UNIT = 180.0
 
 
+@st.cache_data
 def solve_dark_store_model(
-    max_stores_open=None, custom_max_dist=max_distance_km
+    n_cust, n_str, max_stores_open=None, custom_max_dist=max_distance_km
 ):
   solver = pywraplp.Solver.CreateSolver('CBC')
   if not solver:
     return None
 
+  # Set time limit to prevent infinite hanging (e.g., 60 seconds max)
+  solver.set_time_limit(60000)
+
   X = {}
-  for i in range(num_customers):
-    for j in range(num_stores):
-      X[(i, j)] = solver.NumVar(0.0, solver.infinity(), f'X_{i}_{j}')
+  for i in range(n_cust):
+    for j in range(n_str):
+      # Pre-filter: only create variables for valid distances within max distance
+      if d[(i, j)] <= custom_max_dist:
+        X[(i, j)] = solver.NumVar(0.0, solver.infinity(), f'X_{i}_{j}')
 
   y = {}
-  for j in range(num_stores):
+  for j in range(n_str):
     y[j] = solver.IntVar(0, 1, f'y_{j}')
 
   objective = solver.Objective()
-  for i in range(num_customers):
-    for j in range(num_stores):
-      objective.SetCoefficient(X[(i, j)], d[(i, j)] * TRANSPORT_COST_PER_KM)
-  for j in range(num_stores):
+  for (i, j), var in X.items():
+    objective.SetCoefficient(var, d[(i, j)] * TRANSPORT_COST_PER_KM)
+  for j in range(n_str):
     objective.SetCoefficient(y[j], F[j])
   objective.SetMinimization()
 
-  for i in range(num_customers):
+  # Demand satisfaction constraint
+  for i in range(n_cust):
+    valid_stores = [j for j in range(n_str) if (i, j) in X]
+    if not valid_stores:
+      return {'status': 'Infeasible'}  # Customer cannot be reached by any store
     constraint = solver.Constraint(D[i], D[i], f'Demand_{i}')
-    for j in range(num_stores):
+    for j in valid_stores:
       constraint.SetCoefficient(X[(i, j)], 1.0)
 
-  for j in range(num_stores):
+  # Capacity constraint
+  for j in range(n_str):
     constraint = solver.Constraint(-solver.infinity(), 0.0, f'Capacity_{j}')
-    for i in range(num_customers):
-      constraint.SetCoefficient(X[(i, j)], 1.0)
+    for i in range(n_cust):
+      if (i, j) in X:
+        constraint.SetCoefficient(X[(i, j)], 1.0)
     constraint.SetCoefficient(y[j], -C[j])
-
-  for i in range(num_customers):
-    for j in range(num_stores):
-      if d[(i, j)] > custom_max_dist:
-        solver.Add(X[(i, j)] <= 0)
 
   if max_stores_open is not None:
     store_count_constraint = solver.Constraint(
         0, max_stores_open, 'Max_Stores_Open_Limit'
     )
-    for j in range(num_stores):
+    for j in range(n_str):
       store_count_constraint.SetCoefficient(y[j], 1.0)
 
   status = solver.Solve()
 
   if status == pywraplp.Solver.OPTIMAL:
     total_cost = solver.Objective().Value()
-    open_stores = [j for j in range(num_stores) if y[j].solution_value() > 0.5]
+    open_stores = [j for j in range(n_str) if y[j].solution_value() > 0.5]
     allocations = {
         (i, j): X[(i, j)].solution_value()
-        for i in range(num_customers)
-        for j in range(num_stores)
+        for (i, j) in X
         if X[(i, j)].solution_value() > 1e-5
     }
     return {
@@ -199,14 +204,13 @@ def solve_dark_store_model(
         'total_cost': total_cost,
         'open_stores': open_stores,
         'allocations': allocations,
-        'y': y,
-        'X': X,
     }
   else:
     return {'status': 'Infeasible'}
 
 
-results = solve_dark_store_model()
+with st.spinner('Running optimization model... Please wait.'):
+  results = solve_dark_store_model(num_customers, num_stores)
 
 if results and results['status'] == 'Optimal':
   total_demand_val = sum(D.values())
@@ -334,7 +338,9 @@ if results and results['status'] == 'Optimal':
 
     for limit in store_limits:
       if limit <= num_stores:
-        res_limit = solve_dark_store_model(max_stores_open=limit)
+        res_limit = solve_dark_store_model(
+            num_customers, num_stores, max_stores_open=limit
+        )
         if res_limit and res_limit['status'] == 'Optimal':
           c = res_limit['total_cost']
           p = total_revenue - c
